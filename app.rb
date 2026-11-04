@@ -168,19 +168,42 @@ def calculate_regression(points)
   x_mean = points.sum { |x, _y| x } / count.to_f
   y_mean = points.sum { |_x, y| y } / count.to_f
 
-  sum_x_deviation_squared = points.sum { |x, _y| (x - x_mean)**2 }
+  table_data = points.map do |x, y|
+    x_dev = x - x_mean
+    y_dev = y - y_mean
+    {
+      x: x,
+      y: y,
+      x_dev: x_dev,
+      y_dev: y_dev,
+      x_dev_y_dev: x_dev * y_dev,
+      x_dev_sq: x_dev**2
+    }
+  end
+
+  sum_x_deviation_squared = table_data.sum { |row| row[:x_dev_sq] }
   raise ArgumentError, 'The X values must not all be identical.' if sum_x_deviation_squared.zero?
 
-  covariance = points.sum { |x, y| (x - x_mean) * (y - y_mean) }
-  sum_y_deviation_squared = points.sum { |_x, y| (y - y_mean)**2 }
+  covariance = table_data.sum { |row| row[:x_dev_y_dev] }
+  sum_y_deviation_squared = table_data.sum { |row| row[:y_dev]**2 }
   slope = covariance / sum_x_deviation_squared
   intercept = y_mean - slope * x_mean
   
   correlation = sum_y_deviation_squared.zero? ? 0.0 : covariance / Math.sqrt(sum_x_deviation_squared * sum_y_deviation_squared)
-  predictions = points.map { |x, _y| intercept + slope * x }
-  sse = points.zip(predictions).sum { |(_x, y), prediction| (y - prediction)**2 }
+  sse = 0
+  table_data.each do |row|
+    row[:predicted_y] = intercept + slope * row[:x]
+    sse += (row[:y] - row[:predicted_y])**2
+  end
 
-  { slope: slope, intercept: intercept, correlation: correlation, r_squared: correlation**2, sse: sse }
+  {
+    slope: slope,
+    intercept: intercept,
+    correlation: correlation,
+    r_squared: correlation**2,
+    sse: sse,
+    table_data: table_data
+  }
 end
 
 helpers do
@@ -454,6 +477,45 @@ __END__
       </section>
       
       <p class="mt-5 text-center text-sm text-slate-600 font-bold">y = <%= format_number(@metrics[:slope]) %>x <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %></p>
+
+      <section class="panel mt-6 p-5 sm:p-6 overflow-x-auto">
+        <h2 class="metal-heading text-lg font-bold uppercase tracking-wider mb-4">Calculation Table</h2>
+        <table class="w-full text-sm text-center text-slate-600 border-collapse border border-slate-300">
+          <thead class="bg-slate-100 text-[#1c6da8] font-bold text-[12px] tracking-wider border-b border-slate-300">
+            <tr>
+              <th class="p-3 border-r border-slate-300">X</th>
+              <th class="p-3 border-r border-slate-300">Y</th>
+              <th class="p-3 border-r border-slate-300">X - X̄</th>
+              <th class="p-3 border-r border-slate-300">Y - Ȳ</th>
+              <th class="p-3 border-r border-slate-300">(X - X̄)(Y - Ȳ)</th>
+              <th class="p-3 border-r border-slate-300">(X - X̄)²</th>
+              <th class="p-3">Predicted Y (Ŷ)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @metrics[:table_data].each do |row| %>
+              <tr class="border-b border-slate-200 hover:bg-sky-50 transition">
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x]) %></td>
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:y]) %></td>
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev]) %></td>
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:y_dev]) %></td>
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_y_dev]) %></td>
+                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_sq]) %></td>
+                <td class="p-2"><%= format_number(row[:predicted_y]) %></td>
+              </tr>
+            <% end %>
+            <tr class="bg-slate-200 font-bold text-slate-700 text-[13px]">
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |x, _y| x }) %></td>
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |_x, y| y }) %></td>
+              <td class="p-3 border-r border-slate-300">Σ = 0</td>
+              <td class="p-3 border-r border-slate-300">Σ = 0</td>
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_y_dev] }) %></td>
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_sq] }) %></td>
+              <td class="p-3">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:predicted_y] }) %></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
       <section class="panel mt-6 p-5 sm:p-6">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Interpretation of Results</h2>
