@@ -89,7 +89,8 @@ post '/process' do
       next if x_empty || y_empty
 
       if valid_number?(x_raw) && valid_number?(y_raw)
-        cleaned_data << [x_raw.to_f, y_raw.to_f]
+        # Store [ID, X, Y]
+        cleaned_data << [index + 1, x_raw.to_f, y_raw.to_f]
       end
     end
 
@@ -105,21 +106,19 @@ post '/process' do
     @clean_filename = "Cleaned_Regression_Data_#{timestamp}.csv"
     
     CSV.open("public/#{@clean_filename}", "w") do |csv|
-      csv << [@x_name, @y_name]
+      csv << ['ID', @x_name, @y_name]
       cleaned_data.each { |row| csv << row }
     end
 
-    # RANDOM UNIFORM SAMPLING: Eliminates temporal bias when running subsets
+    # RANDOM UNIFORM SAMPLING
     processed_data = if row_limit == 'all' || row_limit.nil? || row_limit.to_i >= cleaned_data.length
                        cleaned_data
                      else
                        cleaned_data.sample(row_limit.to_i)
                      end
 
-    x_values = processed_data.map { |p| p[0] }
-    y_values = processed_data.map { |p| p[1] }
-
-    @points = x_values.zip(y_values)
+    # Structure points with IDs: [{ id: 1, x: val, y: val }]
+    @points = processed_data.map { |item| { id: item[0], x: item[1], y: item[2] } }
     @metrics = calculate_regression(@points)
     
     @step = 3
@@ -147,7 +146,7 @@ post '/manual' do
     @x_name = custom_x.empty? ? "Independent Variable (X)" : custom_x
     @y_name = custom_y.empty? ? "Dependent Variable (Y)" : custom_y
     
-    @points = x_values.zip(y_values)
+    @points = x_values.each_with_index.map { |x, idx| { id: idx + 1, x: x, y: y_values[idx] } }
     @metrics = calculate_regression(@points)
     
     @step = 3
@@ -155,7 +154,7 @@ post '/manual' do
   rescue => e
     @error = e.message
     @step = 1
-    @points = Array(params['x_values']).zip(Array(params['y_values']))
+    @points = Array(params['x_values']).zip(Array(params['y_values'])).each_with_index.map { |p, idx| { id: idx + 1, x: p[0], y: p[1] } }
     erb :index
   end
 end
@@ -172,15 +171,16 @@ end
 
 def calculate_regression(points)
   count = points.length
-  x_mean = points.sum { |x, _y| x } / count.to_f
-  y_mean = points.sum { |_x, y| y } / count.to_f
+  x_mean = points.sum { |p| p[:x] } / count.to_f
+  y_mean = points.sum { |p| p[:y] } / count.to_f
 
-  table_data = points.map do |x, y|
-    x_dev = x - x_mean
-    y_dev = y - y_mean
+  table_data = points.map do |p|
+    x_dev = p[:x] - x_mean
+    y_dev = p[:y] - y_mean
     {
-      x: x,
-      y: y,
+      id: p[:id],
+      x: p[:x],
+      y: p[:y],
       x_dev: x_dev,
       y_dev: y_dev,
       x_dev_y_dev: x_dev * y_dev,
@@ -380,13 +380,14 @@ __END__
       </script>
     <% end %>
 
-    <section class="grid gap-6 lg:grid-cols-[minmax(280px,380px)_1fr]">
+    <!-- EQUAL HEIGHT LAYOUT GRID -->
+    <section class="grid gap-6 lg:grid-cols-[minmax(280px,380px)_1fr] items-stretch">
       
       <!-- LEFT PANEL: UPLOAD AND MANUAL ENTRY -->
-      <div class="panel p-5 sm:p-6 flex flex-col gap-6">
+      <div class="panel p-5 sm:p-6 flex flex-col justify-between h-full gap-6">
         
         <!-- FILE UPLOAD SECTOR -->
-        <form method="post" action="/upload" enctype="multipart/form-data" class="border-b border-slate-300 pb-6">
+        <form method="post" action="/upload" enctype="multipart/form-data" onsubmit="return confirmNewGeneration(event)" class="border-b border-slate-300 pb-6">
           <div class="mb-4 flex items-center justify-between">
             <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">File Upload</h2>
           </div>
@@ -395,46 +396,75 @@ __END__
         </form>
 
         <!-- MANUAL ENTRY SECTOR -->
-        <form method="post" action="/manual" id="regression-form">
-          <div class="mb-5 flex items-center justify-between">
-            <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Data Stream</h2>
-            <button class="text-xs text-slate-500 underline decoration-slate-400 underline-offset-4" type="button" onclick="document.getElementById('manual-rows').innerHTML=''; addRow(); addRow();">CLEAR</button>
-          </div>
+        <form method="post" action="/manual" id="regression-form" class="flex-1 flex flex-col justify-between">
+          <div>
+            <div class="mb-4 flex items-center justify-between">
+              <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Data Stream</h2>
+              <button class="text-xs text-slate-500 underline decoration-slate-400 underline-offset-4" type="button" onclick="window.location.href = '/';">CLEAR</button>
+            </div>
 
-          <div class="grid grid-cols-2 gap-2 mb-3">
-            <input type="text" name="custom_x_name" placeholder="X Variable Name (IV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
-            <input type="text" name="custom_y_name" placeholder="Y Variable Name (DV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
+            <div class="grid grid-cols-2 gap-2 mb-3">
+              <input type="text" name="custom_x_name" placeholder="X Variable Name (IV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
+              <input type="text" name="custom_y_name" placeholder="Y Variable Name (DV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
+            </div>
+            
+            <div class="grid grid-cols-[40px_1fr_1fr_36px] gap-2 mb-3 text-xs uppercase tracking-wider muted font-bold text-center">
+              <span>ID</span><span>X Input</span><span>Y Input</span><span aria-hidden="true"></span>
+            </div>
+            <div class="space-y-2 max-h-[260px] overflow-y-auto pr-1" id="manual-rows"></div>
           </div>
           
-          <div class="grid grid-cols-[1fr_1fr_42px] gap-2 mb-3 text-xs uppercase tracking-wider muted">
-            <span>X input</span><span>Y input</span><span aria-hidden="true"></span>
+          <div>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <button class="metal-outline border px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition hover:bg-sky-50" type="button" onclick="addRow()">+ ADD ROW</button>
+              <button class="metal-button flex-1 px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition hover:brightness-110" type="submit">RUN MODEL</button>
+            </div>
+            <p class="muted mt-3 text-[11px] leading-relaxed">Accepted format: integers and decimals only.</p>
           </div>
-          <div class="space-y-2 max-h-[300px] overflow-y-auto pr-2" id="manual-rows"></div>
-          
-          <div class="mt-5 flex flex-wrap gap-3">
-            <button class="metal-outline border px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition hover:bg-sky-50" type="button" onclick="addRow()">+ ADD ROW</button>
-            <button class="metal-button flex-1 px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition hover:brightness-110" type="submit">RUN MODEL</button>
-          </div>
-          <p class="muted mt-5 text-[11px] leading-relaxed">Accepted format: integers and decimals only.</p>
         </form>
       </div>
 
       <script>
         const initialPoints = <%= @points.to_json %> || [];
+        const isStep3 = <%= @step == 3 ? 'true' : 'false' %>;
         const rowContainer = document.getElementById('manual-rows');
+
+        function confirmNewGeneration(event) {
+          if (isStep3) {
+            return confirm("A model output is currently active. Uploading a new file will reset the current session. Do you want to proceed?");
+          }
+          return true;
+        }
         
         function addRow(xVal = '', yVal = '') {
+          const rowIdx = rowContainer.children.length + 1;
           const row = document.createElement('div');
-          row.className = 'grid grid-cols-[1fr_1fr_42px] gap-2 manual-row';
-          row.innerHTML = `<input class="min-w-0 px-3 py-2 text-sm focus:border-[#1c6da8]" name="x_values[]" type="number" step="any" value="${xVal}" required><input class="min-w-0 px-3 py-2 text-sm focus:border-[#1c6da8]" name="y_values[]" type="number" step="any" value="${yVal}" required><button class="border border-slate-400 text-lg text-slate-500 hover:bg-slate-100" type="button">&times;</button>`;
-          row.querySelector('button').onclick = () => { if (rowContainer.children.length > 2) row.remove(); };
+          row.className = 'grid grid-cols-[40px_1fr_1fr_36px] gap-2 items-center manual-row';
+          row.innerHTML = `
+            <span class="text-xs font-bold text-slate-400 text-center">#${rowIdx}</span>
+            <input class="min-w-0 px-2 py-1.5 text-xs focus:border-[#1c6da8]" name="x_values[]" type="number" step="any" value="${xVal}" required>
+            <input class="min-w-0 px-2 py-1.5 text-xs focus:border-[#1c6da8]" name="y_values[]" type="number" step="any" value="${yVal}" required>
+            <button class="border border-slate-400 text-base text-slate-500 hover:bg-slate-100 flex items-center justify-center h-full rounded" type="button">&times;</button>
+          `;
+          row.querySelector('button').onclick = () => { 
+            if (rowContainer.children.length > 2) {
+              row.remove();
+              updateRowIDs();
+            }
+          };
           rowContainer.appendChild(row);
+        }
+
+        function updateRowIDs() {
+          Array.from(rowContainer.children).forEach((row, i) => {
+            row.querySelector('span').innerText = `#${i + 1}`;
+          });
         }
 
         function renderInitial() {
           rowContainer.innerHTML = '';
           if (initialPoints.length > 0) {
-            initialPoints.forEach(p => addRow(p[0] || '', p[1] || ''));
+            initialPoints.forEach(p => addRow(p.x !== undefined ? p.x : '', p.y !== undefined ? p.y : ''));
           } else {
             addRow(); addRow();
           }
@@ -443,7 +473,7 @@ __END__
       </script>
 
       <!-- RIGHT PANEL: MODEL OUTPUT -->
-      <div>
+      <div class="h-full flex flex-col">
         <% if @step == 3 && @filename && @headers %>
           <div class="panel p-3 mb-4 flex items-center gap-3">
             <button class="metal-button rounded px-4 py-1 text-[10px] font-bold uppercase tracking-wider" onclick="document.getElementById('vars-modal').style.display='flex'">CHANGE VARIABLES / LABELS</button>
@@ -496,12 +526,12 @@ __END__
           </div>
         <% end %>
 
-        <section class="panel min-h-[420px] p-5 sm:p-6">
+        <section class="panel h-full flex flex-col justify-between p-5 sm:p-6">
           <div class="mb-4 flex items-center justify-between">
             <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Model Output</h2>
             <span class="metal-status text-xs"><%= @metrics ? 'STATUS: COMPLETE' : 'STATUS: AWAITING DATA' %></span>
           </div>
-          <div class="relative h-[300px] sm:h-[360px]"><canvas id="regression-chart"></canvas></div>
+          <div class="relative h-[320px] sm:h-[380px] w-full"><canvas id="regression-chart"></canvas></div>
         </section>
       </div>
     </section>
@@ -519,13 +549,15 @@ __END__
         <%= @y_name %> = <%= format_number(@metrics[:slope]) %> &bull; (<%= @x_name %>) <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %>
       </p>
 
+      <!-- STEP-BY-STEP CALCULATION TABLE FROM APP_2.RB -->
       <section class="panel mt-6 p-5 sm:p-6 overflow-x-auto">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider mb-4">Calculation Table</h2>
         <table class="w-full text-sm text-center text-slate-600 border-collapse border border-slate-300">
           <thead class="bg-slate-100 text-[#1c6da8] font-bold text-[12px] tracking-wider border-b border-slate-300">
             <tr>
-              <th class="p-3 border-r border-slate-300">X</th>
-              <th class="p-3 border-r border-slate-300">Y</th>
+              <th class="p-3 border-r border-slate-300">ID</th>
+              <th class="p-3 border-r border-slate-300">X (<%= @x_name %>)</th>
+              <th class="p-3 border-r border-slate-300">Y (<%= @y_name %>)</th>
               <th class="p-3 border-r border-slate-300">X - X̄</th>
               <th class="p-3 border-r border-slate-300">Y - Ȳ</th>
               <th class="p-3 border-r border-slate-300">(X - X̄)(Y - Ȳ)</th>
@@ -536,6 +568,7 @@ __END__
           <tbody>
             <% @metrics[:table_data].each do |row| %>
               <tr class="border-b border-slate-200 hover:bg-sky-50 transition">
+                <td class="p-2 border-r border-slate-200 font-bold">#<%= row[:id] %></td>
                 <td class="p-2 border-r border-slate-200"><%= format_number(row[:x]) %></td>
                 <td class="p-2 border-r border-slate-200"><%= format_number(row[:y]) %></td>
                 <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev]) %></td>
@@ -546,8 +579,9 @@ __END__
               </tr>
             <% end %>
             <tr class="bg-slate-200 font-bold text-slate-700 text-[13px]">
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |x, _y| x }) %></td>
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |_x, y| y }) %></td>
+              <td class="p-3 border-r border-slate-300">Total</td>
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:x] }) %></td>
+              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:y] }) %></td>
               <td class="p-3 border-r border-slate-300">Σ = 0</td>
               <td class="p-3 border-r border-slate-300">Σ = 0</td>
               <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_y_dev] }) %></td>
@@ -568,7 +602,7 @@ __END__
       </section>
 
       <script>
-        const metricPoints = <%= @points.to_json %>.map(p => ({ x: p[0], y: p[1] }));
+        const metricPoints = <%= @points.to_json %>.map(p => ({ id: p.id, x: p.x, y: p.y }));
         const minX = Math.min(...metricPoints.map(p => p.x));
         const maxX = Math.max(...metricPoints.map(p => p.x));
         const slope = <%= @metrics[:slope] %>;
@@ -577,13 +611,24 @@ __END__
         new Chart(document.getElementById('regression-chart'), {
           type: 'scatter',
           data: { datasets: [
-            { label: 'Observed data', data: metricPoints, backgroundColor: '#277db4', borderColor: '#164d78', pointRadius: 5 },
+            { label: 'Observed Data', data: metricPoints, backgroundColor: '#277db4', borderColor: '#164d78', pointRadius: 5 },
             { label: 'Line of Best Fit', data: [{x: minX, y: intercept + slope * minX}, {x: maxX, y: intercept + slope * maxX}], type: 'line', borderColor: '#d66a2c', borderWidth: 2, pointRadius: 0, tension: 0 }
           ]},
           options: { responsive: true, maintainAspectRatio: false, scales: {
             x: { type: 'linear', title: {display: true, text: "<%= @x_name %> (Independent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } },
             y: { title: {display: true, text: "<%= @y_name %> (Dependent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } }
-          }, plugins: { legend: { labels: { color: '#1c2733', font: { family: 'Rajdhani' } } } } }
+          }, plugins: { 
+            legend: { labels: { color: '#1c2733', font: { family: 'Rajdhani' } } },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  if (context.dataset.type === 'line') return 'Line of Best Fit';
+                  const p = context.raw;
+                  return `Point ID #${p.id}: X = ${p.x}, Y = ${p.y}`;
+                }
+              }
+            }
+          }}
         });
       </script>
     <% end %>
