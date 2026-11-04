@@ -73,14 +73,25 @@ post '/process' do
     @filename = params['filename'] 
 
     cleaned_data, x_values, y_values = [], [], []
+    incomplete_rows = []
 
-    raw_data[1..-1].each do |row|
+    raw_data[1..-1].each_with_index do |row, index|
       x_raw, y_raw = row[x_index], row[y_index]
-      next if (x_raw.nil? || x_raw.to_s.strip.empty?) && (y_raw.nil? || y_raw.to_s.strip.empty?)
+      x_empty = x_raw.nil? || x_raw.to_s.strip.empty?
+      y_empty = y_raw.nil? || y_raw.to_s.strip.empty?
+      next if x_empty && y_empty
+
+      incomplete_rows << index + 2 if x_empty || y_empty
+      next if x_empty || y_empty
 
       if valid_number?(x_raw) && valid_number?(y_raw)
         cleaned_data << [x_raw.to_f, y_raw.to_f]
       end
+    end
+
+    unless incomplete_rows.empty?
+      rows = incomplete_rows.map(&:to_s).join(', ')
+      raise ArgumentError, "Rows #{rows} must contain values for both selected variables."
     end
 
     raise ArgumentError, 'Not enough valid numeric data pairs found in those columns.' if cleaned_data.length < 2
@@ -175,6 +186,41 @@ end
 helpers do
   def format_number(value)
     format('%.6f', value).sub(/0+\z/, '').sub(/\.\z/, '')
+  end
+
+  def interpret_regression(metrics, point_count)
+    slope_direction = if metrics[:slope].positive?
+                        'positive'
+                      elsif metrics[:slope].negative?
+                        'negative'
+                      else
+                        'no'
+                      end
+    slope_description = case slope_direction
+                        when 'positive'
+                          "As X increases, Y tends to increase."
+                        when 'negative'
+                          "As X increases, Y tends to decrease."
+                        else
+                          "Changes in X are not associated with a linear change in Y."
+                        end
+
+    correlation_strength = case metrics[:correlation].abs
+                           when 0.8.. then 'strong'
+                           when 0.5...0.8 then 'moderate'
+                           when 0.3...0.5 then 'weak'
+                           else 'very weak'
+                           end
+
+    slope_change = slope_direction == 'no' ? 'no average change in Y for each one-unit change in X' : "#{slope_direction == 'positive' ? 'an increase' : 'a decrease'} of #{format_number(metrics[:slope].abs)} units in Y for each one-unit increase in X"
+
+    [
+      "The fitted line predicts #{slope_change} (slope: #{format_number(metrics[:slope])}). #{slope_description}",
+      "The correlation is #{correlation_strength} (r = #{format_number(metrics[:correlation])}), indicating the direction and strength of the linear relationship in this sample.",
+      "R-squared is #{format_number(metrics[:r_squared] * 100)}%, so the model accounts for approximately #{format_number(metrics[:r_squared] * 100)}% of the observed variation in Y. The remaining variation is not explained by this model.",
+      "The sum of squared errors is #{format_number(metrics[:sse])}. This is most useful for comparing models built from the same Y scale; it is not, by itself, a universal measure of a good or bad fit.",
+      "This analysis describes association, not causation, and its reliability depends on the quality and size of the #{point_count}-point sample."
+    ]
   end
 end
 
@@ -408,6 +454,15 @@ __END__
       </section>
       
       <p class="mt-5 text-center text-sm text-slate-600 font-bold">y = <%= format_number(@metrics[:slope]) %>x <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %></p>
+
+      <section class="panel mt-6 p-5 sm:p-6">
+        <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Interpretation of Results</h2>
+        <ul class="mt-4 list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-600">
+          <% interpret_regression(@metrics, @points.length).each do |interpretation| %>
+            <li><%= interpretation %></li>
+          <% end %>
+        </ul>
+      </section>
 
       <script>
         const metricPoints = <%= @points.to_json %>.map(p => ({ x: p[0], y: p[1] }));
