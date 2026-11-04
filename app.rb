@@ -53,7 +53,7 @@ post '/upload' do
   end
 end
 
-# Simple Linear Regression
+# Process Simple Linear Regression from File
 post '/process' do
   begin
     filepath = File.join('uploads', params['filename'])
@@ -68,11 +68,15 @@ post '/process' do
 
     raise ArgumentError, 'Please select two different variables.' if x_index == y_index
 
-    @x_name = @headers[x_index]
-    @y_name = @headers[y_index]
+    # Assign Independent (X) and Dependent (Y) Variable Names from File or Custom Input
+    custom_x = params['custom_x_name'].to_s.strip
+    custom_y = params['custom_y_name'].to_s.strip
+
+    @x_name = custom_x.empty? ? @headers[x_index] : custom_x
+    @y_name = custom_y.empty? ? @headers[y_index] : custom_y
     @filename = params['filename'] 
 
-    cleaned_data, x_values, y_values = [], [], []
+    cleaned_data = []
     incomplete_rows = []
 
     raw_data[1..-1].each_with_index do |row, index|
@@ -96,7 +100,7 @@ post '/process' do
 
     raise ArgumentError, 'Not enough valid numeric data pairs found in those columns.' if cleaned_data.length < 2
 
-    # Save the FULL cleaned dataset 
+    # Save full cleaned dataset
     timestamp = Time.now.strftime("%Y%m%d_%H%M%S")
     @clean_filename = "Cleaned_Regression_Data_#{timestamp}.csv"
     
@@ -105,11 +109,11 @@ post '/process' do
       cleaned_data.each { |row| csv << row }
     end
 
-    # row sample limit 
-    processed_data = if row_limit == 'all' || row_limit.nil?
+    # RANDOM UNIFORM SAMPLING: Eliminates temporal bias when running subsets
+    processed_data = if row_limit == 'all' || row_limit.nil? || row_limit.to_i >= cleaned_data.length
                        cleaned_data
                      else
-                       cleaned_data.take(row_limit.to_i)
+                       cleaned_data.sample(row_limit.to_i)
                      end
 
     x_values = processed_data.map { |p| p[0] }
@@ -137,8 +141,11 @@ post '/manual' do
     raise ArgumentError, 'Enter at least two complete X/Y pairs.' if x_values.length < 2
     raise ArgumentError, 'X and Y must contain the same number of values.' unless x_values.length == y_values.length
 
-    @x_name = "Manual X Input"
-    @y_name = "Manual Y Input"
+    custom_x = params['custom_x_name'].to_s.strip
+    custom_y = params['custom_y_name'].to_s.strip
+
+    @x_name = custom_x.empty? ? "Independent Variable (X)" : custom_x
+    @y_name = custom_y.empty? ? "Dependent Variable (Y)" : custom_y
     
     @points = x_values.zip(y_values)
     @metrics = calculate_regression(@points)
@@ -211,7 +218,7 @@ helpers do
     format('%.6f', value).sub(/0+\z/, '').sub(/\.\z/, '')
   end
 
-  def interpret_regression(metrics, point_count)
+  def interpret_regression(metrics, point_count, x_name = 'X', y_name = 'Y')
     slope_direction = if metrics[:slope].positive?
                         'positive'
                       elsif metrics[:slope].negative?
@@ -221,11 +228,11 @@ helpers do
                       end
     slope_description = case slope_direction
                         when 'positive'
-                          "As X increases, Y tends to increase."
+                          "As #{x_name} (Independent Variable) increases, #{y_name} (Dependent Variable) tends to increase."
                         when 'negative'
-                          "As X increases, Y tends to decrease."
+                          "As #{x_name} (Independent Variable) increases, #{y_name} (Dependent Variable) tends to decrease."
                         else
-                          "Changes in X are not associated with a linear change in Y."
+                          "Changes in #{x_name} are not associated with a linear change in #{y_name}."
                         end
 
     correlation_strength = case metrics[:correlation].abs
@@ -235,14 +242,14 @@ helpers do
                            else 'very weak'
                            end
 
-    slope_change = slope_direction == 'no' ? 'no average change in Y for each one-unit change in X' : "#{slope_direction == 'positive' ? 'an increase' : 'a decrease'} of #{format_number(metrics[:slope].abs)} units in Y for each one-unit increase in X"
+    slope_change = slope_direction == 'no' ? "no average change in #{y_name} for each one-unit change in #{x_name}" : "#{slope_direction == 'positive' ? 'an increase' : 'a decrease'} of #{format_number(metrics[:slope].abs)} units in #{y_name} for each one-unit increase in #{x_name}"
 
     [
+      "Independent Variable (X): <strong>#{x_name}</strong> | Dependent Variable (Y): <strong>#{y_name}</strong>.",
       "The fitted line predicts #{slope_change} (slope: #{format_number(metrics[:slope])}). #{slope_description}",
-      "The correlation is #{correlation_strength} (r = #{format_number(metrics[:correlation])}), indicating the direction and strength of the linear relationship in this sample.",
-      "R-squared is #{format_number(metrics[:r_squared] * 100)}%, so the model accounts for approximately #{format_number(metrics[:r_squared] * 100)}% of the observed variation in Y. The remaining variation is not explained by this model.",
-      "The sum of squared errors is #{format_number(metrics[:sse])}. This is most useful for comparing models built from the same Y scale; it is not, by itself, a universal measure of a good or bad fit.",
-      "This analysis describes association, not causation, and its reliability depends on the quality and size of the #{point_count}-point sample."
+      "The correlation is #{correlation_strength} (r = #{format_number(metrics[:correlation])}), indicating the linear relationship strength between #{x_name} and #{y_name}.",
+      "R-squared is #{format_number(metrics[:r_squared] * 100)}%, meaning the model accounts for approximately #{format_number(metrics[:r_squared] * 100)}% of the observed variance in #{y_name}.",
+      "This model reflects a randomized sample of #{point_count} observations to avoid temporal sampling bias."
     ]
   end
 end
@@ -315,7 +322,7 @@ __END__
       </div>
     <% end %>
 
-    <!-- STEP 2 MODAL POPUP WITH ROW LIMIT OPTION -->
+    <!-- STEP 2 MODAL POPUP -->
     <% if @step == 2 %>
       <div class="modal-overlay">
         <form class="panel w-full max-w-lg p-6 sm:p-8 m-4" method="post" action="/process">
@@ -327,35 +334,50 @@ __END__
           
           <div class="mb-5">
             <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Independent Variable (X-Axis)</label>
-            <select name="x_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
+            <select name="x_column" id="x_col_select" onchange="updateXPlaceholder()" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
               <% @headers.each_with_index do |header, idx| %>
                 <option value="<%= idx %>"><%= header %></option>
               <% end %>
             </select>
+            <input type="text" name="custom_x_name" id="custom_x_input" placeholder="Display Label for X (Optional)" class="w-full mt-2 px-3 py-2 text-xs border rounded">
           </div>
 
           <div class="mb-5">
             <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Dependent Variable (Y-Axis)</label>
-            <select name="y_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
+            <select name="y_column" id="y_col_select" onchange="updateYPlaceholder()" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
               <% @headers.each_with_index do |header, idx| %>
                 <option value="<%= idx %>" <%= 'selected' if idx == 1 %>><%= header %></option>
               <% end %>
             </select>
+            <input type="text" name="custom_y_name" id="custom_y_input" placeholder="Display Label for Y (Optional)" class="w-full mt-2 px-3 py-2 text-xs border rounded">
           </div>
 
           <div class="mb-8 border-t border-slate-300 pt-5">
-            <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Model Sample Limit (Prevent Overfitting/Lag)</label>
+            <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Sample Limit (Random Sampling)</label>
             <select name="row_limit" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
               <option value="all">Run All Cleaned Rows (Full Dataset)</option>
-              <option value="100">First 100 Rows</option>
-              <option value="500">First 500 Rows</option>
-              <option value="1000">First 1,000 Rows</option>
+              <option value="100">Random 100 Sample Rows</option>
+              <option value="500">Random 500 Sample Rows</option>
+              <option value="1000">Random 1,000 Sample Rows</option>
             </select>
           </div>
 
           <button class="metal-button w-full rounded px-4 py-3 font-bold uppercase tracking-wider" type="submit">CLEAN & RUN MODEL</button>
         </form>
       </div>
+
+      <script>
+        function updateXPlaceholder() {
+          const sel = document.getElementById('x_col_select');
+          document.getElementById('custom_x_input').placeholder = `Display Label (Default: ${sel.options[sel.selectedIndex].text})`;
+        }
+        function updateYPlaceholder() {
+          const sel = document.getElementById('y_col_select');
+          document.getElementById('custom_y_input').placeholder = `Display Label (Default: ${sel.options[sel.selectedIndex].text})`;
+        }
+        updateXPlaceholder();
+        updateYPlaceholder();
+      </script>
     <% end %>
 
     <section class="grid gap-6 lg:grid-cols-[minmax(280px,380px)_1fr]">
@@ -377,6 +399,11 @@ __END__
           <div class="mb-5 flex items-center justify-between">
             <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Data Stream</h2>
             <button class="text-xs text-slate-500 underline decoration-slate-400 underline-offset-4" type="button" onclick="document.getElementById('manual-rows').innerHTML=''; addRow(); addRow();">CLEAR</button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <input type="text" name="custom_x_name" placeholder="X Variable Name (IV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
+            <input type="text" name="custom_y_name" placeholder="Y Variable Name (DV)" class="px-2 py-1 text-xs border rounded font-bold text-[#1c6da8]">
           </div>
           
           <div class="grid grid-cols-[1fr_1fr_42px] gap-2 mb-3 text-xs uppercase tracking-wider muted">
@@ -419,7 +446,7 @@ __END__
       <div>
         <% if @step == 3 && @filename && @headers %>
           <div class="panel p-3 mb-4 flex items-center gap-3">
-            <button class="metal-button rounded px-4 py-1 text-[10px] font-bold uppercase tracking-wider" onclick="document.getElementById('vars-modal').style.display='flex'">CHANGE VARIABLES</button>
+            <button class="metal-button rounded px-4 py-1 text-[10px] font-bold uppercase tracking-wider" onclick="document.getElementById('vars-modal').style.display='flex'">CHANGE VARIABLES / LABELS</button>
             <% if @clean_filename %>
               <a href="/<%= @clean_filename %>" download class="metal-outline border rounded px-4 py-1 text-[10px] font-bold uppercase transition hover:bg-sky-50 ml-auto">DOWNLOAD CLEAN CSV</a>
             <% end %>
@@ -429,7 +456,7 @@ __END__
           <div id="vars-modal" class="modal-overlay" style="display:none;">
             <form class="panel w-full max-w-lg p-6 sm:p-8 m-4" method="post" action="/process">
               <div class="flex justify-between items-center mb-6 border-b border-slate-300 pb-4">
-                <h2 class="metal-heading text-xl font-bold uppercase tracking-wider">Change Variables</h2>
+                <h2 class="metal-heading text-xl font-bold uppercase tracking-wider">Change Variables & Labels</h2>
                 <button type="button" onclick="document.getElementById('vars-modal').style.display='none'" class="text-slate-400 hover:text-red-500 text-xl font-bold">&times;</button>
               </div>
               <input type="hidden" name="filename" value="<%= @filename %>">
@@ -441,14 +468,26 @@ __END__
                     <option value="<%= idx %>" <%= 'selected' if header == @x_name %>><%= header %></option>
                   <% end %>
                 </select>
+                <input type="text" name="custom_x_name" value="<%= @x_name %>" placeholder="Custom Display Label for X" class="w-full mt-2 px-3 py-2 text-xs border rounded">
               </div>
 
-              <div class="mb-8">
+              <div class="mb-5">
                 <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Dependent Variable (Y-Axis)</label>
                 <select name="y_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
                   <% @headers.each_with_index do |header, idx| %>
                     <option value="<%= idx %>" <%= 'selected' if header == @y_name %>><%= header %></option>
                   <% end %>
+                </select>
+                <input type="text" name="custom_y_name" value="<%= @y_name %>" placeholder="Custom Display Label for Y" class="w-full mt-2 px-3 py-2 text-xs border rounded">
+              </div>
+
+              <div class="mb-8 border-t border-slate-300 pt-5">
+                <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Sample Limit (Random Sampling)</label>
+                <select name="row_limit" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
+                  <option value="all">Run All Cleaned Rows (Full Dataset)</option>
+                  <option value="100">Random 100 Sample Rows</option>
+                  <option value="500">Random 500 Sample Rows</option>
+                  <option value="1000">Random 1,000 Sample Rows</option>
                 </select>
               </div>
 
@@ -476,7 +515,9 @@ __END__
         <div class="panel metric p-4"><p class="muted text-[10px] tracking-wider font-bold">SSE (ERROR)</p><p class="value mt-2 text-xl font-bold"><%= format_number(@metrics[:sse]) %></p></div>
       </section>
       
-      <p class="mt-5 text-center text-sm text-slate-600 font-bold">y = <%= format_number(@metrics[:slope]) %>x <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %></p>
+      <p class="mt-5 text-center text-sm text-slate-600 font-bold">
+        <%= @y_name %> = <%= format_number(@metrics[:slope]) %> &bull; (<%= @x_name %>) <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %>
+      </p>
 
       <section class="panel mt-6 p-5 sm:p-6 overflow-x-auto">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider mb-4">Calculation Table</h2>
@@ -520,7 +561,7 @@ __END__
       <section class="panel mt-6 p-5 sm:p-6">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Interpretation of Results</h2>
         <ul class="mt-4 list-disc space-y-2 pl-5 text-sm leading-relaxed text-slate-600">
-          <% interpret_regression(@metrics, @points.length).each do |interpretation| %>
+          <% interpret_regression(@metrics, @points.length, @x_name, @y_name).each do |interpretation| %>
             <li><%= interpretation %></li>
           <% end %>
         </ul>
@@ -540,8 +581,8 @@ __END__
             { label: 'Line of Best Fit', data: [{x: minX, y: intercept + slope * minX}, {x: maxX, y: intercept + slope * maxX}], type: 'line', borderColor: '#d66a2c', borderWidth: 2, pointRadius: 0, tension: 0 }
           ]},
           options: { responsive: true, maintainAspectRatio: false, scales: {
-            x: { type: 'linear', title: {display: true, text: "<%= @x_name %>"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } },
-            y: { title: {display: true, text: "<%= @y_name %>"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } }
+            x: { type: 'linear', title: {display: true, text: "<%= @x_name %> (Independent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } },
+            y: { title: {display: true, text: "<%= @y_name %> (Dependent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } }
           }, plugins: { legend: { labels: { color: '#1c2733', font: { family: 'Rajdhani' } } } } }
         });
       </script>
