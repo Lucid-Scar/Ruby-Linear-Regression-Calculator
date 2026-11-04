@@ -54,6 +54,7 @@ post '/upload' do
 end
 
 # Process Simple Linear Regression from File
+# Process Simple Linear Regression from File
 post '/process' do
   begin
     filepath = File.join('uploads', params['filename'])
@@ -64,16 +65,13 @@ post '/process' do
     
     x_index = params['x_column'].to_i
     y_index = params['y_column'].to_i
-    row_limit = params['row_limit'] # Can be 'all', '100', '500', '1000'
+    row_limit = params['row_limit']
 
     raise ArgumentError, 'Please select two different variables.' if x_index == y_index
 
-    # Assign Independent (X) and Dependent (Y) Variable Names from File or Custom Input
-    custom_x = params['custom_x_name'].to_s.strip
-    custom_y = params['custom_y_name'].to_s.strip
-
-    @x_name = custom_x.empty? ? @headers[x_index] : custom_x
-    @y_name = custom_y.empty? ? @headers[y_index] : custom_y
+    # Automatically fetch names directly from the selected file columns
+    @x_name = @headers[x_index]
+    @y_name = @headers[y_index]
     @filename = params['filename'] 
 
     cleaned_data = []
@@ -214,11 +212,21 @@ def calculate_regression(points)
 end
 
 helpers do
+  def html_escape(value)
+    Rack::Utils.escape_html(value.to_s)
+  end
+
+  def javascript_string(value)
+    JSON.generate(value.to_s).gsub(/[<>&]/) { |char| "\\u%04x" % char.ord }
+  end
+
   def format_number(value)
     format('%.6f', value).sub(/0+\z/, '').sub(/\.\z/, '')
   end
 
   def interpret_regression(metrics, point_count, x_name = 'X', y_name = 'Y')
+    x_name = html_escape(x_name)
+    y_name = html_escape(y_name)
     slope_direction = if metrics[:slope].positive?
                         'positive'
                       elsif metrics[:slope].negative?
@@ -323,6 +331,7 @@ __END__
     <% end %>
 
     <!-- STEP 2 MODAL POPUP -->
+    <!-- STEP 2 MODAL POPUP -->
     <% if @step == 2 %>
       <div class="modal-overlay">
         <form class="panel w-full max-w-lg p-6 sm:p-8 m-4" method="post" action="/process">
@@ -330,26 +339,24 @@ __END__
             <h2 class="metal-heading text-xl font-bold uppercase tracking-wider">Select Variables & Scope</h2>
             <a href="/" class="text-slate-400 hover:text-red-500 text-xl font-bold">&times;</a>
           </div>
-          <input type="hidden" name="filename" value="<%= @filename %>">
+          <input type="hidden" name="filename" value="<%= html_escape(@filename) %>">
           
           <div class="mb-5">
             <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Independent Variable (X-Axis)</label>
-            <select name="x_column" id="x_col_select" onchange="updateXPlaceholder()" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
+            <select name="x_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
               <% @headers.each_with_index do |header, idx| %>
-                <option value="<%= idx %>"><%= header %></option>
+                <option value="<%= idx %>"><%= html_escape(header) %></option>
               <% end %>
             </select>
-            <input type="text" name="custom_x_name" id="custom_x_input" placeholder="Display Label for X (Optional)" class="w-full mt-2 px-3 py-2 text-xs border rounded">
           </div>
 
           <div class="mb-5">
             <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Dependent Variable (Y-Axis)</label>
-            <select name="y_column" id="y_col_select" onchange="updateYPlaceholder()" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
+            <select name="y_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
               <% @headers.each_with_index do |header, idx| %>
-                <option value="<%= idx %>" <%= 'selected' if idx == 1 %>><%= header %></option>
+                <option value="<%= idx %>" <%= 'selected' if idx == 1 %>><%= html_escape(header) %></option>
               <% end %>
             </select>
-            <input type="text" name="custom_y_name" id="custom_y_input" placeholder="Display Label for Y (Optional)" class="w-full mt-2 px-3 py-2 text-xs border rounded">
           </div>
 
           <div class="mb-8 border-t border-slate-300 pt-5">
@@ -363,21 +370,10 @@ __END__
           </div>
 
           <button class="metal-button w-full rounded px-4 py-3 font-bold uppercase tracking-wider" type="submit">CLEAN & RUN MODEL</button>
-        </form>
+                
+      </form>
       </div>
 
-      <script>
-        function updateXPlaceholder() {
-          const sel = document.getElementById('x_col_select');
-          document.getElementById('custom_x_input').placeholder = `Display Label (Default: ${sel.options[sel.selectedIndex].text})`;
-        }
-        function updateYPlaceholder() {
-          const sel = document.getElementById('y_col_select');
-          document.getElementById('custom_y_input').placeholder = `Display Label (Default: ${sel.options[sel.selectedIndex].text})`;
-        }
-        updateXPlaceholder();
-        updateYPlaceholder();
-      </script>
     <% end %>
 
     <!-- EQUAL HEIGHT LAYOUT GRID -->
@@ -483,32 +479,31 @@ __END__
           </div>
 
           <!-- Hidden Change Variables Modal -->
+          <!-- Hidden Change Variables Modal -->
           <div id="vars-modal" class="modal-overlay" style="display:none;">
             <form class="panel w-full max-w-lg p-6 sm:p-8 m-4" method="post" action="/process">
               <div class="flex justify-between items-center mb-6 border-b border-slate-300 pb-4">
-                <h2 class="metal-heading text-xl font-bold uppercase tracking-wider">Change Variables & Labels</h2>
+                <h2 class="metal-heading text-xl font-bold uppercase tracking-wider">Change Variables</h2>
                 <button type="button" onclick="document.getElementById('vars-modal').style.display='none'" class="text-slate-400 hover:text-red-500 text-xl font-bold">&times;</button>
               </div>
-              <input type="hidden" name="filename" value="<%= @filename %>">
+              <input type="hidden" name="filename" value="<%= html_escape(@filename) %>">
               
               <div class="mb-5">
                 <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Independent Variable (X-Axis)</label>
                 <select name="x_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
                   <% @headers.each_with_index do |header, idx| %>
-                    <option value="<%= idx %>" <%= 'selected' if header == @x_name %>><%= header %></option>
+                    <option value="<%= idx %>" <%= 'selected' if header == @x_name %>><%= html_escape(header) %></option>
                   <% end %>
                 </select>
-                <input type="text" name="custom_x_name" value="<%= @x_name %>" placeholder="Custom Display Label for X" class="w-full mt-2 px-3 py-2 text-xs border rounded">
               </div>
 
               <div class="mb-5">
                 <label class="mb-2 block text-sm font-bold uppercase tracking-wider text-slate-500">Dependent Variable (Y-Axis)</label>
                 <select name="y_column" class="w-full px-4 py-3 text-sm font-bold text-[#1c6da8]">
                   <% @headers.each_with_index do |header, idx| %>
-                    <option value="<%= idx %>" <%= 'selected' if header == @y_name %>><%= header %></option>
+                    <option value="<%= idx %>" <%= 'selected' if header == @y_name %>><%= html_escape(header) %></option>
                   <% end %>
                 </select>
-                <input type="text" name="custom_y_name" value="<%= @y_name %>" placeholder="Custom Display Label for Y" class="w-full mt-2 px-3 py-2 text-xs border rounded">
               </div>
 
               <div class="mb-8 border-t border-slate-300 pt-5">
@@ -546,51 +541,93 @@ __END__
       </section>
       
       <p class="mt-5 text-center text-sm text-slate-600 font-bold">
-        <%= @y_name %> = <%= format_number(@metrics[:slope]) %> &bull; (<%= @x_name %>) <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %>
+        <%= html_escape(@y_name) %> = <%= format_number(@metrics[:slope]) %> &bull; (<%= html_escape(@x_name) %>) <%= @metrics[:intercept] >= 0 ? '+' : '-' %> <%= format_number(@metrics[:intercept].abs) %>
       </p>
 
-      <!-- STEP-BY-STEP CALCULATION TABLE FROM APP_2.RB -->
-      <section class="panel mt-6 p-5 sm:p-6 overflow-x-auto">
+      <section class="panel mt-6 p-5 sm:p-6">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider mb-4">Calculation Table</h2>
-        <table class="w-full text-sm text-center text-slate-600 border-collapse border border-slate-300">
-          <thead class="bg-slate-100 text-[#1c6da8] font-bold text-[12px] tracking-wider border-b border-slate-300">
-            <tr>
-              <th class="p-3 border-r border-slate-300">ID</th>
-              <th class="p-3 border-r border-slate-300">X (<%= @x_name %>)</th>
-              <th class="p-3 border-r border-slate-300">Y (<%= @y_name %>)</th>
-              <th class="p-3 border-r border-slate-300">X - X̄</th>
-              <th class="p-3 border-r border-slate-300">Y - Ȳ</th>
-              <th class="p-3 border-r border-slate-300">(X - X̄)(Y - Ȳ)</th>
-              <th class="p-3 border-r border-slate-300">(X - X̄)²</th>
-              <th class="p-3">Predicted Y (Ŷ)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% @metrics[:table_data].each do |row| %>
-              <tr class="border-b border-slate-200 hover:bg-sky-50 transition">
-                <td class="p-2 border-r border-slate-200 font-bold">#<%= row[:id] %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x]) %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:y]) %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev]) %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:y_dev]) %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_y_dev]) %></td>
-                <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_sq]) %></td>
-                <td class="p-2"><%= format_number(row[:predicted_y]) %></td>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm text-center text-slate-600 border-collapse border border-slate-300" id="calc-table">
+            <thead class="bg-slate-100 text-[#1c6da8] font-bold text-[12px] tracking-wider border-b border-slate-300">
+              <tr>
+                <th class="p-3 border-r border-slate-300">ID</th>
+                <th class="p-3 border-r border-slate-300">X (<%= html_escape(@x_name) %>)</th>
+                <th class="p-3 border-r border-slate-300">Y (<%= html_escape(@y_name) %>)</th>
+                <th class="p-3 border-r border-slate-300">X - X̄</th>
+                <th class="p-3 border-r border-slate-300">Y - Ȳ</th>
+                <th class="p-3 border-r border-slate-300">(X - X̄)(Y - Ȳ)</th>
+                <th class="p-3 border-r border-slate-300">(X - X̄)²</th>
+                <th class="p-3">Predicted Y (Ŷ)</th>
               </tr>
-            <% end %>
-            <tr class="bg-slate-200 font-bold text-slate-700 text-[13px]">
-              <td class="p-3 border-r border-slate-300">Total</td>
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:x] }) %></td>
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:y] }) %></td>
-              <td class="p-3 border-r border-slate-300">Σ = 0</td>
-              <td class="p-3 border-r border-slate-300">Σ = 0</td>
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_y_dev] }) %></td>
-              <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_sq] }) %></td>
-              <td class="p-3">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:predicted_y] }) %></td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody id="calc-tbody">
+              <% @metrics[:table_data].each do |row| %>
+                <tr class="border-b border-slate-200 hover:bg-sky-50 transition calc-row">
+                  <td class="p-2 border-r border-slate-200 font-bold">#<%= row[:id] %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:x]) %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:y]) %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev]) %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:y_dev]) %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_y_dev]) %></td>
+                  <td class="p-2 border-r border-slate-200"><%= format_number(row[:x_dev_sq]) %></td>
+                  <td class="p-2"><%= format_number(row[:predicted_y]) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+            <tfoot>
+              <tr class="bg-slate-200 font-bold text-slate-700 text-[13px]">
+                <td class="p-3 border-r border-slate-300">Total</td>
+                <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:x] }) %></td>
+                <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@points.sum { |p| p[:y] }) %></td>
+                <td class="p-3 border-r border-slate-300">Σ = 0</td>
+                <td class="p-3 border-r border-slate-300">Σ = 0</td>
+                <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_y_dev] }) %></td>
+                <td class="p-3 border-r border-slate-300">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:x_dev_sq] }) %></td>
+                <td class="p-3">Σ = <%= format_number(@metrics[:table_data].sum { |row| row[:predicted_y] }) %></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="mt-4 flex items-center justify-between text-xs font-bold text-slate-600">
+          <button id="prev-page" onclick="changePage(-1)" class="metal-outline border px-3 py-1.5 rounded disabled:opacity-40 disabled:cursor-not-allowed">PREVIOUS</button>
+          <span id="page-info">Page 1 of 1</span>
+          <button id="next-page" onclick="changePage(1)" class="metal-outline border px-3 py-1.5 rounded disabled:opacity-40 disabled:cursor-not-allowed">NEXT</button>
+        </div>
       </section>
+
+      <script>
+        const rowsPerPage = 20;
+        let currentPage = 1;
+        const rows = document.querySelectorAll('.calc-row');
+        const totalPages = Math.ceil(rows.length / rowsPerPage) || 1;
+
+        function showPage(page) {
+          currentPage = page;
+          const start = (currentPage - 1) * rowsPerPage;
+          const end = start + rowsPerPage;
+
+          rows.forEach((row, index) => {
+            row.style.display = (index >= start && index < end) ? '' : 'none';
+          });
+
+          document.getElementById('page-info').innerText = `Page ${currentPage} of ${totalPages} (${rows.length} total rows)`;
+          document.getElementById('prev-page').disabled = (currentPage === 1);
+          document.getElementById('next-page').disabled = (currentPage === totalPages);
+        }
+
+        function changePage(direction) {
+          const newPage = currentPage + direction;
+          if (newPage >= 1 && newPage <= totalPages) {
+            showPage(newPage);
+          }
+        }
+
+        if (rows.length > 0) {
+          showPage(1);
+        }
+      </script>
 
       <section class="panel mt-6 p-5 sm:p-6">
         <h2 class="metal-heading text-lg font-bold uppercase tracking-wider">Interpretation of Results</h2>
@@ -602,7 +639,7 @@ __END__
       </section>
 
       <script>
-        const metricPoints = <%= @points.to_json %>.map(p => ({ id: p.id, x: p.x, y: p.y }));
+        const metricPoints = <%= @points.to_json %>.map(p => ({ x: p.x, y: p.y }));
         const minX = Math.min(...metricPoints.map(p => p.x));
         const maxX = Math.max(...metricPoints.map(p => p.x));
         const slope = <%= @metrics[:slope] %>;
@@ -611,24 +648,13 @@ __END__
         new Chart(document.getElementById('regression-chart'), {
           type: 'scatter',
           data: { datasets: [
-            { label: 'Observed Data', data: metricPoints, backgroundColor: '#277db4', borderColor: '#164d78', pointRadius: 5 },
+            { label: 'Observed data', data: metricPoints, backgroundColor: '#277db4', borderColor: '#164d78', pointRadius: 5 },
             { label: 'Line of Best Fit', data: [{x: minX, y: intercept + slope * minX}, {x: maxX, y: intercept + slope * maxX}], type: 'line', borderColor: '#d66a2c', borderWidth: 2, pointRadius: 0, tension: 0 }
           ]},
           options: { responsive: true, maintainAspectRatio: false, scales: {
-            x: { type: 'linear', title: {display: true, text: "<%= @x_name %> (Independent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } },
-            y: { title: {display: true, text: "<%= @y_name %> (Dependent Variable)"}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } }
-          }, plugins: { 
-            legend: { labels: { color: '#1c2733', font: { family: 'Rajdhani' } } },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  if (context.dataset.type === 'line') return 'Line of Best Fit';
-                  const p = context.raw;
-                  return `Point ID #${p.id}: X = ${p.x}, Y = ${p.y}`;
-                }
-              }
-            }
-          }}
+            x: { type: 'linear', title: {display: true, text: <%= javascript_string("#{@x_name} (Independent Variable)") %>}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } },
+            y: { title: {display: true, text: <%= javascript_string("#{@y_name} (Dependent Variable)") %>}, grid: { color: 'rgba(54,75,94,.14)' }, ticks: { color: '#5d6b79' } }
+          }, plugins: { legend: { labels: { color: '#1c2733', font: { family: 'Rajdhani' } } } } }
         });
       </script>
     <% end %>
